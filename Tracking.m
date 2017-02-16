@@ -9,8 +9,8 @@ function Tracking(videoPath,firstDetection)
     buffer = 600;  % load multiple video frames at a time (increases processing speed)
     % How many frames ahead (or behind) the reference image will be grabbed from
     refOffset = 150;
-    minSize = 50; % Minimum size for a detected object
-    midlineResolution = 10;
+    minSize = 550; % Minimum size for a detected object
+    midlineResolution = 3; % pizels between each midline point
     curvePoints = 10;
     %% Initialize results
     results = [];
@@ -104,20 +104,24 @@ function Tracking(videoPath,firstDetection)
         if (objects.sizes(I(1,1)) < minSize) && (length(I) > 1)
             bw(objects.PixelIdxList{I(2)}) = 1;
         end
-        
+        % Adds third largest object if detection is too small
+        if (length(find(bw)) < minSize) && (length(I) > 2)
+            bw(objects.PixelIdxList{I(3)}) = 1;
+        end        
         %% Draw Convex hull
         cv = bwboundaries(bw);
-        CH = convhull(cv{1}(:,1),cv{1}(:,2));
-        cv = cv{1}(CH,[2 1]);
+        cv = cell2mat(cv);
+        CH = convhull(cv(:,1),cv(:,2));
+        cv = cv(CH,[2 1]);
         %% Get midline
         [midline,D] = longestLine(cv);
         
         %% Get detected pixels perpendicular to midline
-        disp('Midline detections')
         n = floor(D/midlineResolution); %Get numper of points to plot
         res = D/n; % interval between perpendicular lines
         % Get slope ( y1 - y2 / x1 - x2 )
         mMidline = (midline(2,2) - midline(1,2)) / (midline(2,1) - midline(1,1));
+        bMidline = midline(1,2) - mMidline*midline(1,1);
         m = -1/mMidline; % Perpendicular slope
         bStart = midline(1,2) - m*midline(1,1); %intercept of first perpendicular line
         dx = res/(1+(mMidline^2));
@@ -125,13 +129,15 @@ function Tracking(videoPath,firstDetection)
         
         % get coords of detected pixels
         [row,col,~] = find(bw);
-        % Plot detected areas 
-        figure(1);hold off;imshow(bw);axis equal;hold on;
+        % Plot detected areas
+        figure(1);subplot(3,1,1);hold off;imshow(bw);axis equal;hold on;
         plot(midline(:,1),midline(:,2),'color',[0 1 0]);
         xlim(bbox(1:2)); ylim(bbox(3:4));
+        
         % Loop through all possible line segments
         detections = [];
-        figure(2)
+        transposedPoints = [];
+        distanceFromMidline = [];
 
         for j=0:n
             % plot line
@@ -145,19 +151,43 @@ function Tracking(videoPath,firstDetection)
             % Save intersected pixels
             [idx,~,~] = find((y(:,1) <= max(yPred,[],2)) & (y(:,2) >= min(yPred,[],2)));
             if size(idx,1) > 0
-                detections = [detections; col(idx) row(idx) repmat(j+1,length(idx),1)];
-                % move detections onto line
+                % Pixels which cross the adjacent line
+                detectionsTemp = [col(idx) row(idx)];
+                detectionsTemp = [mean(detectionsTemp(:,1)) mean(detectionsTemp(:,2)) ...
+                    j+1 midline(1,1) midline(1,2)];
+                detections = [detections; detectionsTemp];
+                
+                % Point on line closest to detected pixel center
+                transposedPointsTemp = (detectionsTemp(:,1) + detectionsTemp(:,2)*m - m*b) / (1 + m^2);
+                transposedPointsTemp  = [transposedPointsTemp (m*transposedPointsTemp  + b)];
+                
+                transposedPoints = [transposedPoints; transposedPointsTemp];
+                
+                % Distance of each transposed point to the midline
+                temp = [];
+                for k = 1:size(transposedPointsTemp,1)
+                    % Absolute distance
+                    Q1 = midline(1,:); Q2 = midline(2,:); P = transposedPointsTemp(k,:);
+                    temp = abs( det([P-Q1;Q2-Q1]) )/norm(Q2-Q1);
+                    % Correct negative values
+                    if find(P(2) < (mMidline*P(1) + bMidline));
+                        temp = temp*-1;
+                    end
+                    distanceFromMidline = [distanceFromMidline; temp];
+                end
             end
         end
         
-        % Normalize image (center around 0,0)
-        detectionsRange = [min(detections(:,1)) max(detections(:,1)) min(detections(:,2)) max(detections(:,2))];
-        detectionsNorm = [(detections(:,1) - mean(midline(:,1))) (detections(:,2) - mean(midline(:,2)))];
-        % Rotate data to be horizontal
-        
         %% Show detectons
-        scatter(detections(:,1),detections(:,2),[],[1 0 0],'filled');
-        
+        scatter(detections(:,1),detections(:,2),[],[0.5 0 0],'filled');
+        scatter(transposedPoints(:,1),transposedPoints(:,2),[],[1 0 0],'filled','o');
+
+        %% Add fitted spline
+        figure(1);subplot(3,1,2); hold off;
+        data = [detections(:,3)*res,distanceFromMidline];
+        scatter(data(:,1),data(:,2),'x');axis equal; hold on;
+        curve = smooth(data(:,1),data(:,2),0.25,'rloess');
+        plot(data(:,1),curve,'color',[1 0 0]);grid on;
         
         %% Redefine rectangle area (recenter)
         %% This updates the motion detection area for the following frame
@@ -167,50 +197,20 @@ function Tracking(videoPath,firstDetection)
             c(2) - ((bbox(4) - bbox(3))/2) ...
             c(2) + ((bbox(4) - bbox(3))/2)];
         
-        %% Fit smooth line
-        % locations of pixels
-        try
-            temp = bw2(bbox(3):bbox(4),bbox(1):bbox(2));
-        catch
-            disp('Cannot load bounding box, eel is likely on the edge of the screen.  Ending analysis')
-            break
-        end
-        idx = find(temp);
-        [j,k] = ind2sub(size(temp),idx);
-        % Fit line
-        [x,y] = fitspline(j,k);
-        
-        results = [results; [ones(size(x,2),1)*i (int32(x) + bbox(1))' (int32(y) + bbox(3))']];
-        
-        figure(4)
-        subplot(5,1,1);
-            imshow(abs(refImageBefore(bbox(3):bbox(4),bbox(1):bbox(2)) -...
+        %% Show image subtraction
+        figure(1);subplot(3,1,3);
+        imshow(abs(refImageBefore(bbox(3):bbox(4),bbox(1):bbox(2)) -...
                 currentImage(bbox(3):bbox(4),bbox(1):bbox(2))))            
-            title('Image subtraction (Ref image before current frame)')
-        subplot(5,1,2);
-            imshow(abs(refImageBefore(bbox(3):bbox(4),bbox(1):bbox(2)) -...
-                currentImage(bbox(3):bbox(4),bbox(1):bbox(2))))            
-            title('Image subtraction (Ref image after current frame)')
-        subplot(5,1,3);
-            imshow(bw(bbox(3):bbox(4),bbox(1):bbox(2)));
-            title('Small objects removed')
-        subplot(5,1,4);
-            imshow(currentImage(bbox(3):bbox(4),bbox(1):bbox(2))); hold on
-            % transparent color mask
-            mask = ones(size(temp));
-            mask(:,:,2) = ones(size(temp))*0.5;
-            mask(:,:,3) = ones(size(temp))*0.5;
-            hmask = imshow(mask);
-            set(hmask,'AlphaData',temp*0.5)
-            hold off;
-            title('Cleaned object overlayed on video')
-        subplot(5,1,5);
-            imshow(currentImage(bbox(3):bbox(4),bbox(1):bbox(2))); hold on;
-            scatter(x,y,'.r','lineWidth',2); 
-            text(1,1,['Frame: ' num2str(i) '  Seconds: ' num2str(i/vr.FrameRate)],'color','red');hold off
-            title('Averaged y-values (estimate of center line)')
+        title('Image subtraction (Ref image before current frame)')
+        text(10,10,...
+            ['Pixels Detected: ' num2str(length(find(bw))) ' Frame: ' num2str(i) ],...
+            'color',[0.8 0 0]);
+        %% SHow metrics
+        results = [results; [data(:,1) curve detections(:,4) detections(:,5)]];
+      
     end
     
     csvwrite(['TrackingResuts' date '.csv'], results)
     disp('Analysis complete!')
+ 
 end
