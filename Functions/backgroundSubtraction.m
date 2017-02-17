@@ -1,7 +1,6 @@
     %% difference between images (return a binary image)
-    function bw = backgroundSubtraction(refImage,currentImage, bbox)
+    function bw = backgroundSubtraction(refImage,currentImage, bbox,thresh)
         gdiff = abs(refImage - currentImage);
-        thresh = 0.04;
         dims = size(currentImage);
         % Empty black image
         bw = zeros(dims(1),dims(2));
