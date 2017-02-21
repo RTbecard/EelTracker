@@ -1,4 +1,4 @@
-function Tracking(videoPath,firstDetection,endFrame,refOffset,...
+function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
     midlineResolution,loessSmooth,maxMidlineLength,buffer,frameInterval,...
     thresh,Individual, Treatment,video,minChunkSize)
     vr = VideoReader(videoPath);
@@ -21,15 +21,15 @@ function Tracking(videoPath,firstDetection,endFrame,refOffset,...
     % up processing time on video formats other than MJPEG
     function [frame] = loadBatch(idx)
         %Returns an int8 matrix of greyscale values
-        if idx > vr.NumberOfFrames || idx < 1
+        if idx > endFrame || idx < startFrame
             % Return a white frame (full detection) if frame number is out
             % of bounds
            frame = ones(vr.Height,vr.Width);
            frame(:,:) = 255;
            frame = uint8(frame);
         else
-            if idx > endFrame || idx < startFrame
-                startFrame = idx;
+            if idx > lastFrame || idx < startFrame
+                startFrame = max(idx,1);
                 endFrame = min([(startFrame + buffer - 1) vr.NumberOfFrames]);
                 frames = read(vr,[startFrame,endFrame]);
             end
@@ -61,7 +61,7 @@ function Tracking(videoPath,firstDetection,endFrame,refOffset,...
     bbox = [x(1) x(2) y(1) y(2)];
     
     %% loop through all frames
-    for i=firstDetection:frameInterval:min(((vr.NumberOfFrames) -1),endFrame)
+    for i=firstDetection:frameInterval:min(((vr.NumberOfFrames) -1),lastFrame )
         %% Load current frame
         currentImage = loadBatch(i);
        
@@ -132,12 +132,21 @@ function Tracking(videoPath,firstDetection,endFrame,refOffset,...
                     end
                 end
             end
+            
+            %% Breakpoint for testing
+            if i == 195
+                disp('stop')
+            end
+            
             %% Draw Convex hull and calculate midline
             cv = cHull(bw);
             [midline,D] = longestLine(cv);
-
+            if(midline(1,1) > midline(2,1))
+                %% Make sure first popints is on left side
+                midline = midline([2 1],:);
+            end
             %% Get detected pixels perpendicular to midline
-            n = floor(D/midlineResolution); %Get numper of points to plot
+            n = midlineResolution; %Get numper of points to plot
             res = D/n; % interval between perpendicular lines
             % Get slope ( y1 - y2 / x1 - x2 )
             mMidline = (midline(2,2) - midline(1,2)) / (midline(2,1) - midline(1,1));
@@ -147,9 +156,10 @@ function Tracking(videoPath,firstDetection,endFrame,refOffset,...
             bMidline = midline(1,2) - mMidline*midline(1,1);
             m = -1/mMidline; % Perpendicular slope
             bStart = midline(1,2) - m*midline(1,1); %intercept of first perpendicular line
-            dx = res/(1+(mMidline^2));
-            dy = m*dx;
-
+            
+            % calc x/y offset for each perpendicular line segment
+            dy = res/cosd(atand(mMidline)+90);
+            
             % get coords of detected pixels
             [row,col,~] = find(bw);
             % Plot detected areas
@@ -162,12 +172,11 @@ function Tracking(videoPath,firstDetection,endFrame,refOffset,...
             detections = [];
             transposedPoints = [];
             distanceFromMidline = [];
-            data = [];
-
+            
             %% Loop through each midline segment
             for j=0:n
                 % plot line
-                b = bStart - (j*dy) - (1/dx);
+                b = bStart - (j*dy);
                 plot(bbox(1:2),m*bbox(1:2) + b,'color',[0 1 0])
                 % Find intersecting pixels
                 x = [(col - 0.5) (col + 0.5)];
@@ -204,7 +213,7 @@ function Tracking(videoPath,firstDetection,endFrame,refOffset,...
             end
             
             %% Add fitted spline (smooth using loess)            
-            curve = smooth(detections(:,3)*res,...
+            curve = smooth((detections(:,3)-1)*res,...
                 distanceFromMidline,loessSmooth,'rloess');
             curve = [(detections(:,3)-1)*res curve];
 
@@ -247,9 +256,11 @@ function Tracking(videoPath,firstDetection,endFrame,refOffset,...
             title('Midline Pixel Detection');
             %% Show normalized and fitted curve
             subplot(4,1,2); hold off;
-            scatter(data(:,1),data(:,2),[],[1 0 0],'filled','o'); 
+            scatter((detections(:,3)-1)*res,distanceFromMidline,...
+                [],[1 0 0],'filled','o'); 
             xlim([min(data(:,1)) max(data(:,1))]); axis equal;
             hold on; plot(data(:,1),data(:,2)); grid on;
+            legend('Average Midline','Smoothed Midline');
             title('Normalized & Smoothed midline')
             %% Show image subtraction
             figure(1);subplot(4,1,3);hold off;
@@ -264,6 +275,8 @@ function Tracking(videoPath,firstDetection,endFrame,refOffset,...
             subplot(4,1,4); hold off;
             imshow(currentImage); hold on; xlim(bbox(1:2)); ylim(bbox(3:4));
             grid on;
+            scatter(transposedPoints(:,1),transposedPoints(:,2),...
+                [],[1 0 0],'o'); 
             plot(data(:,9),data(:,10),'color',[1 0 0],'linewidth',2);
             title('Smoothed midline overlayed on source image');
             
