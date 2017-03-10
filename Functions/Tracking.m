@@ -1,8 +1,9 @@
 function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
-    midlineResolution,loessSmooth,buffer,frameInterval,...
-    thresh,Individual, Treatment,video)
+    midlineResolution,loessSmooth,minObject,frameInterval,...
+    thresh,Individual,Treatment,ignoreLast)
+
     vr = VideoReader(videoPath);
-    addpath('Functions')
+    buffer = 1;
     
     %% Options
     bwConnectivity = 8;
@@ -10,11 +11,6 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
     %% Initialize results
     results = [];
 
-    if video == 1;
-        vw = VideoWriter(['TrackingVideo' Individual Treatment '_' date '.avi']);
-        vw.FrameRate = 5;
-        open(vw);
-    end
     %% Function for loading video frames (current frame)
     % This function facilitates loeading multiple frames at once.
     % For computers with more memory, loading frames in batches will speed
@@ -65,7 +61,7 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
     
     %% Loop through all frames
     previousDetections = 0;
-    framesToAnalyse = firstDetection:frameInterval:min(((vr.NumberOfFrames) -1),lastFrame)
+    framesToAnalyse = firstDetection:frameInterval:min(((vr.NumberOfFrames) -1),lastFrame);
     for i= framesToAnalyse
         %% Load current frame
         currentImage = loadBatch(i);
@@ -104,14 +100,15 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
                     bwbb(objects.PixelIdxList{j}) = 1;
                 end
             end
+            %% Load detected objects larger than minimum object size
+            for j = 1:length(objects.PixelIdxList)
+                temp = length(objects.PixelIdxList{j});
+                if temp > minObject;
+                    bwbb(objects.PixelIdxList{j}) = 1;
+                end
+            end
+            
             bw(rows,cols) = bwbb;
-            
-            %% Estimate head location
-            % Average vector per frame (forward movement)
-            
-            % 
-            
-            previousDetections = find(bwbb);
             
             %% Draw Convex hull and calculate midline
             cv = cHull(bw);
@@ -128,15 +125,23 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
             
             res = (D/midlineResolution);
             
-            %% Add fitted spline (smooth using loess)            
-            curve = smooth((detections(:,3)-1)*res,...
-                distanceFromMidline,loessSmooth,'rloess');
-            curve = [(detections(:,3)-1)*res curve];
+            %% Add fitted spline (smooth using loess)
+            x = sqrt((transposedPoints(:,1) - detections(:,4)).^2 + (transposedPoints(:,2) - detections(:,5)).^2);
+            y = distanceFromMidline;
+            % Remove last _ points
+            if ignoreLast > 0
+                x((end - ignoreLast + 1):end,:) = NaN;
+                y((end - ignoreLast + 1):end,:) = NaN;
+            end
+            curve = [x smooth(x,y,loessSmooth,'rloess')];
 
             %% Interpolate missing points (cubic spline)
-            temp = interp1(curve(:,1),curve(:,2),...
-                (0:midlineResolution)*res,'spline');                    
-            curve = [((0:midlineResolution)*res)' temp'];
+            lastPoint = size(curve,1) - ignoreLast;
+            x = ((0:(midlineResolution - ignoreLast))*res);
+            temp = interp1(curve(1:lastPoint,1),curve(1:lastPoint,2),...
+                x,'spline');
+            curve = [x' temp'];
+
             %% Calc length of smooth midline
             midlineLength = sum(sqrt(sum(diff(curve).^2)));
 
@@ -146,13 +151,20 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
             absXSmooth = xDisp + midline(1,1);
             absYSmooth = midline(1,2) + yDisp;
             
+            %% Append NaNs for ignored points
+            curve = [curve ;repmat(NaN,ignoreLast,2)];
+            absXSmooth = [absXSmooth;repmat(NaN,ignoreLast,1)];
+            absYSmooth= [absYSmooth ;repmat(NaN,ignoreLast,1)];
+            
             %% Store results
             points = size(curve,1);
-            data = [curve ...
-                repmat(midline(1,1),points,1) repmat(midline(1,2),points,1 ),...
-                repmat(midline(2,1),points,1) repmat(midline(2,2),points,1 )...
-                repmat(midlineLength,points,1) repmat(i,points,1) absXSmooth absYSmooth...
-                repmat(mMidline,points,1)];
+            data = [curve ...  % Relative to swim path
+                repmat(midline(1,1),points,1) repmat(midline(1,2),points,1 ),... % Head
+                repmat(midline(2,1),points,1) repmat(midline(2,2),points,1 )...  % Tail
+                repmat(midlineLength,points,1) ... % Midline Length
+                repmat(i,points,1) ... % Frame
+                absXSmooth absYSmooth ...  % Absolute midline position
+                repmat(midlineResolution,points,1)]; % Midline Points
             results = [results; data];
       
             %% Redefine rectangle area (recenter)
@@ -165,6 +177,7 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
 
             %% Plot results
             % Show detectons (fitted vs pixel centers)
+            figure(1);
             subplot(4,1,1);hold off;
             imshow(bw(bbox(3):bbox(4),bbox(1):bbox(2))*0.5 + ...
                 bwRaw(bbox(3):bbox(4),bbox(1):bbox(2))*0.5); hold on;
@@ -179,12 +192,12 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
             subplot(4,1,2); hold off;
             scatter((detections(:,3)-1)*res,distanceFromMidline,...
                 [],[1 0 0],'filled','o'); 
-            xlim([min(data(:,1)) max(data(:,1))]); axis equal;
+            xlim([min((detections(:,3)-1)*res) max((detections(:,3)-1)*res)]); axis equal;
             hold on; plot(data(:,1),data(:,2)); grid on;
             legend('Average Midline','Smoothed Midline');
             title('Normalized & Smoothed midline')
             % Show image subtraction
-            figure(1);subplot(4,1,3);hold off;
+            subplot(4,1,3);hold off;
             imshow(greyScale(bbox(3):bbox(4),bbox(1):bbox(2)) - currentImage(bbox(3):bbox(4),bbox(1):bbox(2)))            
             title('Image subtraction (Ref image before current frame)'); hold on;
             text(10,10,...
@@ -201,20 +214,39 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
             plot(data(:,9) - double(bbox(1)) + 1,...
                 data(:,10) - double(bbox(3)) + 1,'color',[1 0 0],'linewidth',2);
             title('Smoothed midline overlayed on source image');
-            
-            if video == 1;
-                 writeVideo(vw,getframe(1));
-            end
+
         end
     end
     
+    %% Convert midline to swimming vector
+    % Find first swim position
+    idx = find(results(:,8) == framesToAnalyse(1));
+    start = [mean(results(idx,1)) mean(results(idx,2))];
+    % Find last  swim position
+    idx = find(results(:,8) == framesToAnalyse(end));
+    finish = [mean(results(idx,1)) mean(results(idx,2))];
+
+    % Translocate midline
+    y = [];
+    for k = 1:(size(results,1)) 
+        y = [y; point2LineDistance(start,finish,results(k,1:2))];
+    end
+    
+    m = (finish(2) - start(2)) / (finish(1) - start(1));
+    if m == 0; m = 0.0000001;end;
+    if m == -Inf; m = 999999;end;
+    b = start(2) - m*start(1);
+    
+    [xSnap,ySnap] = snapPointsToLine(results(:,1),results(:,2),m,b);
+    x = sqrt((start(1) - xSnap).^2 + (start(2) - ySnap).^2);
+    
+    results(:,1:2) = [x y];
+    
     fw = fopen(['TrackingResuts' Individual Treatment '_' date '.csv'],'w');
-    fprintf(fw,'%s \n','CurveX,CurveY,Midline1X,Midline1Y,Midline2X,Midline2Y,SmoothedMidlineLength,Frame,AbsX,AbsY,MidlineSlope');
+    fprintf(fw,'%s \n','CurveX,CurveY,HeadX,HeadY,TailX,TailY,MidlineLength,Frame,AbsX,AbsY,MidlineSlope');
     fprintf(fw,'%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f \n',results');
     fclose(fw);
-    if video == 1;
-        close(vw);
-    end
+
     disp('Analysis complete!')
  
 end
