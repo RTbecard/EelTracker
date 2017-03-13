@@ -248,27 +248,32 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
     
     x = sqrt((xSnap-start(1)).^2 + (ySnap-start(2)).^2);
     % Correct negative values
-    idx =  find(start(2) > (m*xSnap + b));
+    idx =  find(start(2) < (m*xSnap + b));
     x(idx) = -x(idx);
     
-    results(:,9:10) = [x y];
+    results(:,1:2) = [x y];
     
     %% testing
     figure(2)
     idx = find(results(:,8) == framesToAnalyse(1)); hold off;
-    plot(results(idx,9),results(idx,10)); hold on;
+    plot(results(idx,1),results(idx,2)); hold on;
     idx = find(results(:,8) == framesToAnalyse(end)); 
-    plot(results(idx,9),results(idx,10),'r');
-    set(gca,'Ydir','normal');
-    set(gca,'Xdir','reverse');axis 'equal'
+    plot(results(idx,1),results(idx,2),'r');
+    set(gca,'Ydir','reverse');
+    set(gca,'Xdir','normal');axis 'equal'
     legend('start','finish');
     title('Start and end positions (relative to swimming direction)')
 
+
+    finalResults = [results repmat(ignoreLast,size(results,1),1)];
     
-    
-    fw = fopen(['TrackingResuts' Individual Treatment '_' date '.csv'],'w');
-    fprintf(fw,'%s \n','CurveX,CurveY,HeadX,HeadY,TailX,TailY,MidlineLength,Frame,AbsX,AbsY,MidlineSlope');
-    fprintf(fw,'%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f \n',results');
+    fileName = ['TrackingResuts' Individual Treatment '_' date '.csv'];
+    if exist(fileName, 'file')==2
+        delete(fileName);
+    end
+    fw = fopen(fileName,'w+');
+    fprintf(fw,'%s \n','CurveX,CurveY,HeadX,HeadY,TailX,TailY,MidlineLength,Frame,AbsX,AbsY,MidlinePoints,IngoreLastNPoints');
+    fprintf(fw,'%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f \n',finalResults');
     fclose(fw);
 
     disp('Analysis complete!')

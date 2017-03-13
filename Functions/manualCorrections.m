@@ -1,7 +1,7 @@
 function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh)
 
-    file = './TrackingResuts1A_12-Mar-2017.csv';
-    data = csvread(file,1);
+    resultsFile = './TrackingResuts1A_13-Mar-2017.csv';
+    data = csvread(resultsFile,1);
 
     vr = VideoReader(videoPath);
     buffer = 1;
@@ -10,7 +10,8 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
     bwConnectivity = 8;
 
     %% Initialize results
-    results = [];
+    midlineResolution = data(1,11);
+    ignoreLast = data(1,12);
 
     %% Function for loading video frames (current frame)
     % This function facilitates loeading multiple frames at once.
@@ -42,6 +43,7 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
     startFrame = data(1,8);
     endFrame = startFrame + buffer - 1;
     frames = read(vr,[startFrame,endFrame]);
+    firstDetection = startFrame;
     % The reference frame is redefined on each frame of video.  It is the
     % region around the eel n frames before or after the current frame,
     % where n = refOffset.  This is useful in case the camera moves
@@ -68,7 +70,7 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
         
         %% Define bbox location
         width = abs(bbox(2) - bbox(1))/2;
-        dataTemp = data(idxFrame,9:10);x
+        dataTemp = data(idxFrame,9:10);
         dataTemp = dataTemp(find(~(isnan(dataTemp(:,1)) | isnan(dataTemp(:,2)))),:);
         bbox([1 2]) = [-width width] + mean(dataTemp(:,1));
         height = abs(bbox(3) - bbox(4))/2;
@@ -77,7 +79,7 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
         %% Plot results
         % Show detectons (fitted vs pixel centers)
         currentImage = loadBatch(currentFrame);
-        figure(1);
+        figure(3);
         hold off;
         imshow(currentImage(bbox(3):bbox(4),bbox(1):bbox(2))); hold on;
         %% Overlay midline
@@ -86,14 +88,17 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
             [],[1 0 0],'o'); 
         plot(data(idxFrame,9) - double(bbox(1)) + 1,...
             data(idxFrame,10) - double(bbox(3)) + 1,'color',[1 0 0],'linewidth',2);
+        scatter(data(idxFrame(1),[3 5]) - double(bbox(1)), data(idxFrame(1),[4 6]) - double(bbox(3)),...
+            [],[1 0 0],'og'); hold off;
+        
         title('Smoothed midline overlayed on source image');
         text(10,10,['Frame: ' num2str(currentFrame)]);
+        set(gcf,'KeyPressFcn', @KeyPress);
     end
 
     showFrame();
 
     %% Set keyboard input
-    set(gcf,'KeyPressFcn', @KeyPress);
     function KeyPress(ObjH, EventData)
         Key = get(ObjH, 'CurrentCharacter');
         disp(['Key: '  Key]);
@@ -118,14 +123,16 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
                 disp('Then the midline will be recalculated')
                 [x,y] = ginput(2);
                 idxFrame = find(data(:,8) == currentFrame);
-                data(idxFrame,3:4) = repmat([x(1),y(1)],length(idxFrame),1);
-                data(idxFrame,5:6) = repmat([x(2),y(2)],length(idxFrame),1);
+                data(idxFrame,3:4) = repmat([x(1) + double(bbox(1)),y(1) + double(bbox(3))],length(idxFrame),1);
+                data(idxFrame,5:6) = repmat([x(2) + double(bbox(1)),y(2) + double(bbox(3))],length(idxFrame),1);
                 motionDetection;
             case 's'
                 disp('Use the mouse to reposition midline points manually.')
                 disp('Press enter when finished, then the midlien will be redrawn')
                 %% Draw midpoint lines on image
+                manualDetection;
             case 'o'
+                saveResults;
                 disp('Results written to new file!')
         end
     end
@@ -165,16 +172,7 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
         if ~isempty(objects.PixelIdxList);
             % Load largest detected object
             bwbb(objects.PixelIdxList{I}) = 1;
-            %% Load detected objects which overlap with previous objects
-            % Detected objects which overlap with objects detected in the
-            % previous frames will be included here
-            for j = 1:length(objects.PixelIdxList)
-                temp = intersect(previousDetections,objects.PixelIdxList{j});
-                if ~isempty(temp)
-                    bwbb(objects.PixelIdxList{j}) = 1;
-                end
-            end
-            %% Load detected objects larger than minimum object size
+            %% Load detected objects larger than minimum object size or overlap head or tail point
             for j = 1:length(objects.PixelIdxList)
                 temp = length(objects.PixelIdxList{j});
                 if temp > minObject;
@@ -185,8 +183,8 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
             bw(rows,cols) = bwbb;
 
             %% Draw Convex hull and calculate midline
-            cv = cHull(bw);
-            [midline,D] = longestLine(cv);
+            midline = [data(idxFrame(1),[3 4]);data(idxFrame(1),[5 6])];
+            D = sqrt((midline(1,1) - midline(2,1)).^2 + (midline(1,2) - midline(2,2)).^2);
             if(midline(1,1) > midline(2,1))
                 %% Make sure first point is on left side
                 midline = midline([2 1],:);
@@ -238,11 +236,12 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
                 repmat(midlineLength,points,1) ... % Midline Length
                 repmat(i,points,1) ... % Frame
                 absXSmooth absYSmooth ...  % Absolute midline position
-                repmat(midlineResolution,points,1)]; % Midline Points
+                repmat(midlineResolution,points,1) ... % midlien resolution
+                repmat(ignoreLast,points,1)]; % Ignore last n points
 
             %% Convert midline to swimming vector
             % Find first swim position
-            idx = find(data(:,8) == startFrame);
+            idx = find(data(:,8) == firstDetection);
             tempX = data(idx,9);
             tempY = data(idx,10);
             idx = find(~(isnan(tempX) | isnan(tempY)));
@@ -273,15 +272,155 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
             idx =  find(start(2) > (m*xSnap + b));
             x(idx) = -x(idx);
 
-            data(idxFrame,9:10) = [x y];
+            data(idxFrame,1:2) = [x y];
+            showFrame() %% Refresh image
         end
+    end
+
+%% Loop through all frames
+    function manualDetection();
+        
+        %% Show green lines for snapping on image
+        % Get head and tail positions
+        idxFrame = find(data(:,8) == currentFrame);
+        midline(1,:) = data(idxFrame(1),3:4);
+        midline(2,:) = data(idxFrame(1),5:6);
+        D = sqrt((midline(1,1) - midline(2,1)).^2 + (midline(1,2) - midline(2,2)).^2);
+        
+        % Define lines
+        [mOut,bOut] = DefineMidlineSegments(midline(1,:) - double([bbox(1) bbox(3)]) + 1,midline(2,:) - double([bbox(1) bbox(3)]) + 1,midlineResolution,D);
+        figure(3)
+        Q1 = [];
+        Q2 = [];
+        for i = 1:length(mOut)
+            hold on;
+            xLine = [0;bbox(2) - bbox(1)];
+            yLine = [mOut(i)*(xLine(1)) + bOut(i);...
+                mOut(i)*(xLine(2)) + bOut(i)];
+            plot(xLine,yLine,'g');hold off;
+            Q1(i,:) = [xLine(1) yLine(1)];
+            Q2(i,:) = [xLine(2) yLine(2)];
+        end
+
+        
+        % Replace points on closest line
+        disp('Click on the green lines where youd like to correct the points');
+        disp('When finished, press enter')
+        disp('After, your clicked lcoations will snap to the lines and become the new locations')
+        [xIn,yIn] = ginput();
+        
+        % Curve is absolute position
+        curve = data(idxFrame,9:10);
+        % convert to bounding box location
+        curve = [(curve(:,1) - double(bbox(1)) + 1 ) (curve(:,2) + 1 - double(bbox(3)))]; 
+        
+        % Find closest line to each point
+        for i = 1:length(xIn)
+            distances = [];
+            for j = 1:(length(mOut) - ignoreLast)
+                distances(j) = point2LineDistance(Q1(j,:),Q2(j,:),[xIn(i) yIn(i)]);
+            end
+            % Get closest line
+            [~,I] = min(abs(distances));
+            % Snap to closest line
+            [xSnap,ySnap] = snapPointsToLine(xIn(i),yIn(i),mOut(I),bOut(I));
+            curve(I,:) = [xSnap,ySnap];
+        end
+        
+        % Convert back to absolute position
+        curve = [(curve(:,1) - 1 + double(bbox(1))) (curve(:,2) - 1 + double(bbox(3)))]; 
+                
+        %% Translocate to major axis reference
+        y = [];
+        for k = 1:(size(idxFrame,1)) 
+            y = [y; point2LineDistance(midline(1,:),midline(2,:),curve(k,:))];
+        end
+        % Define swimming path line
+        m = (midline(2,2) - midline(1,2)) / (midline(2,1) - midline(1,1));
+        if m == 0; m = 0.0000001;end;
+        if m == -Inf; m = 999999;end;
+        b = midline(1,2) - m*midline(1,1);
+
+        [xSnap,ySnap] = snapPointsToLine(curve(:,1),curve(:,2),m,b);
+
+        x = sqrt((xSnap-midline(1,1)).^2 + (ySnap-midline(1,2)).^2);
+        % Correct negative values
+        idx =  find(midline(1,2) > (m*xSnap + b));
+        x(idx) = -x(idx);
+        curve = [x y];
+        %% Interpolate missing points (cubic spline)
+        lastPoint = size(curve,1) - ignoreLast;
+        x = ((0:(midlineResolution - ignoreLast))*(D/midlineResolution));
+        temp = interp1(curve(1:lastPoint,1),curve(1:lastPoint,2),...
+            x,'spline');
+        curve = [x' temp'];
+
+        %% Calc length of smooth midline
+        midlineLength = sum(sqrt(sum(diff(curve).^2)));
+
+        %% Transform smoothed and interpolated points back to origional image
+        mMidline = (midline(2,2) - midline(1,2)) / (midline(2,1) - midline(1,1));
+        xDisp= curve(:,1) * cos(atan(mMidline));
+        yDisp= -curve(:,2) + (curve(:,1) * tan(atan(mMidline)));
+        absXSmooth = xDisp + midline(1,1);
+        absYSmooth = midline(1,2) + yDisp;
+        
+        curve = [curve; repmat(nan,ignoreLast,2)];
+        absXSmooth = [absXSmooth; repmat(nan,ignoreLast,1)];
+        absYSmooth= [absYSmooth; repmat(nan,ignoreLast,1)];
+        %% Store results
+        points = size(curve,1);
+        data(idxFrame,:) = [curve...  % Relative to swim path
+            repmat(midline(1,1),points,1) repmat(midline(1,2),points,1 ),... % Head
+            repmat(midline(2,1),points,1) repmat(midline(2,2),points,1 )...  % Tail
+            repmat(midlineLength,points,1) ... % Midline Length
+            repmat(currentFrame,points,1) ... % Frame
+            absXSmooth  absYSmooth  ...  % Absolute midline position
+            repmat(midlineResolution,points,1) ... % midlien resolution
+            repmat(ignoreLast,points,1)]; % Ignore last n points
+
+        %% Convert midline to swimming vector
+        % Find first swim position
+        idx = find(data(:,8) == firstDetection);
+        tempX = data(idx,9);
+        tempY = data(idx,10);
+        idx = find(~(isnan(tempX) | isnan(tempY)));
+        start = [mean(tempX(idx)) mean(tempY(idx))];
+        % Find last  swim position
+        idx = find(data(:,8) == lastFrame);
+        tempX = data(idx,9);
+        tempY = data(idx,10);
+        idx = find(~(isnan(tempX) | isnan(tempY)));
+        finish = [mean(tempX(idx)) mean(tempY(idx))];
+
+        % Translocate midline
+        dataTemp = data(idxFrame,:);
+        y = [];
+        for k = 1:(size(idxFrame,1)) 
+            y = [y; point2LineDistance(start,finish,dataTemp(k,9:10))];
+        end
+        % Define swimming path line
+        m = (finish(2) - start(2)) / (finish(1) - start(1));
+        if m == 0; m = 0.0000001;end;
+        if m == -Inf; m = 999999;end;
+        b = start(2) - m*start(1);
+
+        [xSnap,ySnap] = snapPointsToLine(dataTemp(:,9),dataTemp(:,10),m,b);
+
+        x = sqrt((xSnap-start(1)).^2 + (ySnap-start(2)).^2);
+        % Correct negative values
+        idx =  find(start(2) > (m*xSnap + b));
+        x(idx) = -x(idx);
+
+        data(idxFrame,1:2) = [x y];
+        showFrame() %% Refresh image
     end
  
     
     %% Save results
     function saveResults
         fw = fopen([resultsFile '_corrected.csv'],'w');
-        fprintf(fw,'%s \n','CurveX,CurveY,HeadX,HeadY,TailX,TailY,MidlineLength,Frame,AbsX,AbsY,MidlineSlope');
+        fprintf(fw,'%s \n','CurveX,CurveY,HeadX,HeadY,TailX,TailY,MidlineLength,Frame,AbsX,AbsY,MidlinePoints,IgnoreLastNPoints');
         fprintf(fw,'%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f \n',data');
         fclose(fw);
     end

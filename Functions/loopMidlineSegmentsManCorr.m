@@ -1,5 +1,5 @@
 function [detections,transposedPoints,distanceFromMidline,mMidline,bMidline] =...
-    loopMidlineSegments(P1,P2,n,D,bw)
+    loopMidlineSegmentsManCorr(P1,P2,n,D,bw)
 % Calculate detected pixels along lines perpendicular to the longest axis
 % of the fish
 %
@@ -55,13 +55,10 @@ function [detections,transposedPoints,distanceFromMidline,mMidline,bMidline] =..
                 distanceFromMidline = [distanceFromMidline; ...
                     point2LineDistance(P1,P2,transposedPointsTemp(k,:))];
             end
-        elseif j == 0 %% use head position if no motion detected
-            detections = [detections;P1 j+1 P1(1) P1(2)];
-            transposedPoints = [transposedPoints; P1];
+        elseif j == 0
+            detections = P1;
+            transposedPoints = P1;
             distanceFromMidline = [distanceFromMidline; 0];
-        elseif j == n % Use tail position if no motion detected
-            detections = [detections;P2 j+1 P1(1) P1(2)];
-            transposedPoints = [transposedPoints; P2];
-            distanceFromMidline = [distanceFromMidline; 0];
+        elseif j == n
         end
     end
