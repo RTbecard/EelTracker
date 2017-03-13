@@ -1,6 +1,7 @@
 function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh)
 
-    resultsFile = './TrackingResuts1A_13-Mar-2017.csv';
+    [file,path] = uigetfile({'*.*','All Files'},'Select Results File');
+    resultsFile = [path,file];
     data = csvread(resultsFile,1);
 
     vr = VideoReader(videoPath);
@@ -303,7 +304,7 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
         end
 
         
-        % Replace points on closest line
+        %% Replace points on closest line (get user input)
         disp('Click on the green lines where youd like to correct the points');
         disp('When finished, press enter')
         disp('After, your clicked lcoations will snap to the lines and become the new locations')
@@ -313,8 +314,10 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
         curve = data(idxFrame,9:10);
         % convert to bounding box location
         curve = [(curve(:,1) - double(bbox(1)) + 1 ) (curve(:,2) + 1 - double(bbox(3)))]; 
+        % scatter(curve(:,1),curve(:,2))
         
         % Find closest line to each point
+        manualPoints = [];
         for i = 1:length(xIn)
             distances = [];
             for j = 1:(length(mOut) - ignoreLast)
@@ -322,14 +325,17 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
             end
             % Get closest line
             [~,I] = min(abs(distances));
+            manualPoints = [manualPoints I];
             % Snap to closest line
             [xSnap,ySnap] = snapPointsToLine(xIn(i),yIn(i),mOut(I),bOut(I));
             curve(I,:) = [xSnap,ySnap];
         end
+        manualPoints = unique(manualPoints);
+        % scatter(curve(:,1),curve(:,2))
         
         % Convert back to absolute position
         curve = [(curve(:,1) - 1 + double(bbox(1))) (curve(:,2) - 1 + double(bbox(3)))]; 
-                
+        
         %% Translocate to major axis reference
         y = [];
         for k = 1:(size(idxFrame,1)) 
@@ -342,18 +348,18 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
         b = midline(1,2) - m*midline(1,1);
 
         [xSnap,ySnap] = snapPointsToLine(curve(:,1),curve(:,2),m,b);
+        %scatter(xSnap,ySnap)
 
         x = sqrt((xSnap-midline(1,1)).^2 + (ySnap-midline(1,2)).^2);
         % Correct negative values
-        idx =  find(midline(1,2) > (m*xSnap + b));
-        x(idx) = -x(idx);
+%        idx =  find(midline(1,2) > (m*xSnap + b));
+        % x(idx) = -x(idx);
+        % scatter(x,y)
         curve = [x y];
-        %% Interpolate missing points (cubic spline)
-        lastPoint = size(curve,1) - ignoreLast;
-        x = ((0:(midlineResolution - ignoreLast))*(D/midlineResolution));
-        temp = interp1(curve(1:lastPoint,1),curve(1:lastPoint,2),...
-            x,'spline');
-        curve = [x' temp'];
+        
+        %% Interpolate range of manually specified points
+        queryPoints = min(manualPoints):max(manualPoints);
+        curve(queryPoints,2) = interp1(curve(manualPoints,1),curve(manualPoints,2),curve(queryPoints,1),'spline');
 
         %% Calc length of smooth midline
         midlineLength = sum(sqrt(sum(diff(curve).^2)));
@@ -364,10 +370,11 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
         yDisp= -curve(:,2) + (curve(:,1) * tan(atan(mMidline)));
         absXSmooth = xDisp + midline(1,1);
         absYSmooth = midline(1,2) + yDisp;
+        % scatter(absXSmooth,absYSmooth)
         
-        curve = [curve; repmat(nan,ignoreLast,2)];
-        absXSmooth = [absXSmooth; repmat(nan,ignoreLast,1)];
-        absYSmooth= [absYSmooth; repmat(nan,ignoreLast,1)];
+%        curve = [curve; repmat(nan,ignoreLast,2)];
+%        absXSmooth = [absXSmooth; repmat(nan,ignoreLast,1)];
+%        absYSmooth= [absYSmooth; repmat(nan,ignoreLast,1)];
         %% Store results
         points = size(curve,1);
         data(idxFrame,:) = [curve...  % Relative to swim path
@@ -421,7 +428,7 @@ function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh
     function saveResults
         fw = fopen([resultsFile '_corrected.csv'],'w');
         fprintf(fw,'%s \n','CurveX,CurveY,HeadX,HeadY,TailX,TailY,MidlineLength,Frame,AbsX,AbsY,MidlinePoints,IgnoreLastNPoints');
-        fprintf(fw,'%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f \n',data');
+        fprintf(fw,'%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f \n',data');
         fclose(fw);
     end
     
