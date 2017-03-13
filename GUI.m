@@ -374,6 +374,18 @@ Tracking(selectVideo,startTime*fps,endTime*fps,referenceOffset*fps,...
 
 % --- Executes on button press in postProcessing.
 function postProcessing_Callback(hObject, eventdata, handles)
-% hObject    handle to postProcessing (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
+
+referenceOffset = str2double(get(findobj('tag','referenceOffset'),'string'));
+loessSmooth = str2double(get(findobj('tag','loessSmooth'),'string'));
+detectionThreshold = str2double(get(findobj('tag','detectionThreshold'),'string'));
+minObject = str2double(get(findobj('tag','minObject'),'string'));
+
+selectVideo = get(findobj('tag','selectVideo'),'string');
+
+vr = VideoReader(selectVideo);
+fps = vr.FrameRate;
+
+
+addpath('Functions')
+manualCorrections(selectVideo,referenceOffset*fps,loessSmooth,...
+    minObject,detectionThreshold);

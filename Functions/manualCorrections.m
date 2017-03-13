@@ -1,10 +1,11 @@
-function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
-    midlineResolution,loessSmooth,minObject,frameInterval,...
-    thresh,Individual,Treatment,ignoreLast)
+function [] = manualCorrections(videoPath,refOffset,loessSmooth,minObject,thresh)
+
+    file = './TrackingResuts1A_12-Mar-2017.csv';
+    data = csvread(file,1);
 
     vr = VideoReader(videoPath);
     buffer = 1;
-    
+    lastFrame = max(data(:,8));
     %% Options
     bwConnectivity = 8;
 
@@ -38,7 +39,7 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
     end
     
     %% Load reference frame
-    startFrame = 1;
+    startFrame = data(1,8);
     endFrame = startFrame + buffer - 1;
     frames = read(vr,[startFrame,endFrame]);
     % The reference frame is redefined on each frame of video.  It is the
@@ -51,7 +52,7 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
 
     %% First frame where eel is fully visible
     figure(2);
-    imshow(loadBatch(firstDetection))
+    imshow(loadBatch(startFrame))
     disp('Select upper left and lower right region where eel is')
     [x,y] = ginput(2); %% User selects tracking box start position
     x = int32(x);
@@ -59,13 +60,86 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
     close(2)
     bbox = [x(1) x(2) y(1) y(2)];
     
+    %% Show first frame
+    currentFrame = startFrame;
+    function showFrame()
+        
+        idxFrame = find(data(:,8) == currentFrame);
+        
+        %% Define bbox location
+        width = abs(bbox(2) - bbox(1))/2;
+        dataTemp = data(idxFrame,9:10);x
+        dataTemp = dataTemp(find(~(isnan(dataTemp(:,1)) | isnan(dataTemp(:,2)))),:);
+        bbox([1 2]) = [-width width] + mean(dataTemp(:,1));
+        height = abs(bbox(3) - bbox(4))/2;
+        bbox(3:4) = [-height height] + mean(dataTemp(:,2));
+        
+        %% Plot results
+        % Show detectons (fitted vs pixel centers)
+        currentImage = loadBatch(currentFrame);
+        figure(1);
+        hold off;
+        imshow(currentImage(bbox(3):bbox(4),bbox(1):bbox(2))); hold on;
+        %% Overlay midline
+        scatter(data(idxFrame,9) - double(bbox(1)) + 1,...
+            data(idxFrame,10) - double(bbox(3)) + 1,...
+            [],[1 0 0],'o'); 
+        plot(data(idxFrame,9) - double(bbox(1)) + 1,...
+            data(idxFrame,10) - double(bbox(3)) + 1,'color',[1 0 0],'linewidth',2);
+        title('Smoothed midline overlayed on source image');
+        text(10,10,['Frame: ' num2str(currentFrame)]);
+    end
+
+    showFrame();
+
+    %% Set keyboard input
+    set(gcf,'KeyPressFcn', @KeyPress);
+    function KeyPress(ObjH, EventData)
+        Key = get(ObjH, 'CurrentCharacter');
+        disp(['Key: '  Key]);
+        switch Key
+            case 'z'
+                frms = unique(data(:,8));
+                idx = find(frms  == currentFrame);
+                if idx > 1
+                    currentFrame = frms(idx - 1);
+                    showFrame();
+                end
+            case 'x'
+                frms  = unique(data(:,8));
+                idx = find(frms  == currentFrame);
+                if idx < length(frms)
+                    currentFrame = frms(idx + 1);
+                    showFrame();
+                end
+            case 'a'
+                disp('Click on the image twice.')
+                disp('First the head, then the tail.')
+                disp('Then the midline will be recalculated')
+                [x,y] = ginput(2);
+                idxFrame = find(data(:,8) == currentFrame);
+                data(idxFrame,3:4) = repmat([x(1),y(1)],length(idxFrame),1);
+                data(idxFrame,5:6) = repmat([x(2),y(2)],length(idxFrame),1);
+                motionDetection;
+            case 's'
+                disp('Use the mouse to reposition midline points manually.')
+                disp('Press enter when finished, then the midlien will be redrawn')
+                %% Draw midpoint lines on image
+            case 'o'
+                disp('Results written to new file!')
+        end
+    end
+
+
+    
     %% Loop through all frames
-    previousDetections = 0;
-    framesToAnalyse = firstDetection:frameInterval:min(((vr.NumberOfFrames) -1),lastFrame);
-    for i= framesToAnalyse
+    function motionDetection();
+        previousDetections = 0;
+        i = currentFrame;
         %% Load current frame
         currentImage = loadBatch(i);
-       
+        idxFrame = find(data(:,8) == currentFrame);
+        
         %% Load reference image (both before or after current frame)
         refImageBefore = loadBatch(i - refOffset);
         refImageAfter = loadBatch(i + refOffset);
@@ -90,7 +164,7 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
         % If no motion detections, skip this frame
         if ~isempty(objects.PixelIdxList);
             % Load largest detected object
-             bwbb(objects.PixelIdxList{I}) = 1;
+            bwbb(objects.PixelIdxList{I}) = 1;
             %% Load detected objects which overlap with previous objects
             % Detected objects which overlap with objects detected in the
             % previous frames will be included here
@@ -107,9 +181,9 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
                     bwbb(objects.PixelIdxList{j}) = 1;
                 end
             end
-            
+
             bw(rows,cols) = bwbb;
-            
+
             %% Draw Convex hull and calculate midline
             cv = cHull(bw);
             [midline,D] = longestLine(cv);
@@ -117,14 +191,14 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
                 %% Make sure first point is on left side
                 midline = midline([2 1],:);
             end
-           
+
             %% Estimate midline points
             [detections,transposedPoints,distanceFromMidline,...
                 mMidline,bMidline] = loopMidlineSegments(...
                 midline(1,:),midline(2,:),midlineResolution,D,bw);
-            
+
             res = (D/midlineResolution);
-            
+
             %% Add fitted spline (smooth using loess)
             x = sqrt((transposedPoints(:,1) - detections(:,4)).^2 + (transposedPoints(:,2) - detections(:,5)).^2);
             y = distanceFromMidline;
@@ -150,127 +224,67 @@ function Tracking(videoPath,firstDetection,lastFrame,refOffset,...
             yDisp= -curve(:,2) + (curve(:,1) * tan(atan(mMidline)));
             absXSmooth = xDisp + midline(1,1);
             absYSmooth = midline(1,2) + yDisp;
-            
+
             %% Append NaNs for ignored points
             curve = [curve ;repmat(NaN,ignoreLast,2)];
             absXSmooth = [absXSmooth;repmat(NaN,ignoreLast,1)];
             absYSmooth= [absYSmooth ;repmat(NaN,ignoreLast,1)];
-            
+
             %% Store results
             points = size(curve,1);
-            data = [curve ...  % Relative to swim path
+            data(idxFrame,:) = [curve ...  % Relative to swim path
                 repmat(midline(1,1),points,1) repmat(midline(1,2),points,1 ),... % Head
                 repmat(midline(2,1),points,1) repmat(midline(2,2),points,1 )...  % Tail
                 repmat(midlineLength,points,1) ... % Midline Length
                 repmat(i,points,1) ... % Frame
                 absXSmooth absYSmooth ...  % Absolute midline position
                 repmat(midlineResolution,points,1)]; % Midline Points
-            results = [results; data];
-      
-            %% Redefine rectangle area (recenter)
-            % This updates the motion detection area for the following frame
-            c = [((midline(1,1) + midline(2,1))/2) ((midline(1,2) + midline(2,2))/2)];
-            bbox = [(c(1) - ((bbox(2) - bbox(1))/2)) ...
-                (c(1) + ((bbox(2) - bbox(1))/2)) ...
-                c(2) - ((bbox(4) - bbox(3))/2) ...
-                c(2) + ((bbox(4) - bbox(3))/2)];
 
-            %% Plot results
-            % Show detectons (fitted vs pixel centers)
-            figure(1);
-            subplot(4,1,1);hold off;
-            imshow(bw(bbox(3):bbox(4),bbox(1):bbox(2))*0.5 + ...
-                bwRaw(bbox(3):bbox(4),bbox(1):bbox(2))*0.5); hold on;
-            scatter(detections(:,1) - double(bbox(1)) + 1,...
-                detections(:,2) - double(bbox(3)) + 1 ...
-                ,[],[0.5 0 0],'o');
-            scatter(transposedPoints(:,1) - double(bbox(1)) + 1 ...
-                ,transposedPoints(:,2) - double(bbox(3)) + 1 ...
-                ,[],[1 0 0],'x');
-            title('Midline Pixel Detection');
-            % Show normalized and fitted curve
-            subplot(4,1,2); hold off;
-            scatter((detections(:,3)-1)*res,distanceFromMidline,...
-                [],[1 0 0],'filled','o'); 
-            xlim([min((detections(:,3)-1)*res) max((detections(:,3)-1)*res)]); axis equal;
-            hold on; plot(data(:,1),data(:,2)); grid on;
-            legend('Average Midline','Smoothed Midline');
-            title('Normalized & Smoothed midline')
-            % Show image subtraction
-            subplot(4,1,3);hold off;
-            imshow(greyScale(bbox(3):bbox(4),bbox(1):bbox(2)) - currentImage(bbox(3):bbox(4),bbox(1):bbox(2)))            
-            title('Image subtraction (Ref image before current frame)'); hold on;
-            text(10,10,...
-                ['Pixels Detected: ' num2str(length(find(bw)))...
-                ' Frame: ' num2str(i)...
-                ' Straight Midline Length: ' num2str(D)],...
-                'color',[0.8 0 0]);
-            % Show origional image overlayed with smoothing spline
-            subplot(4,1,4); hold off;
-            imshow(currentImage(bbox(3):bbox(4),bbox(1):bbox(2))); hold on;
-            scatter(transposedPoints(:,1) - double(bbox(1)) + 1,...
-                transposedPoints(:,2) - double(bbox(3)) + 1,...
-                [],[1 0 0],'o'); 
-            plot(data(:,9) - double(bbox(1)) + 1,...
-                data(:,10) - double(bbox(3)) + 1,'color',[1 0 0],'linewidth',2);
-            title('Smoothed midline overlayed on source image');
+            %% Convert midline to swimming vector
+            % Find first swim position
+            idx = find(data(:,8) == startFrame);
+            tempX = data(idx,9);
+            tempY = data(idx,10);
+            idx = find(~(isnan(tempX) | isnan(tempY)));
+            start = [mean(tempX(idx)) mean(tempY(idx))];
+            % Find last  swim position
+            idx = find(data(:,8) == lastFrame);
+            tempX = data(idx,9);
+            tempY = data(idx,10);
+            idx = find(~(isnan(tempX) | isnan(tempY)));
+            finish = [mean(tempX(idx)) mean(tempY(idx))];
 
+            % Translocate midline
+            dataTemp = data(idxFrame,:);
+            y = [];
+            for k = 1:(size(idxFrame,1)) 
+                y = [y; point2LineDistance(start,finish,dataTemp(k,9:10))];
+            end
+            % Define swimming path line
+            m = (finish(2) - start(2)) / (finish(1) - start(1));
+            if m == 0; m = 0.0000001;end;
+            if m == -Inf; m = 999999;end;
+            b = start(2) - m*start(1);
+
+            [xSnap,ySnap] = snapPointsToLine(dataTemp(:,9),dataTemp(:,10),m,b);
+
+            x = sqrt((xSnap-start(1)).^2 + (ySnap-start(2)).^2);
+            % Correct negative values
+            idx =  find(start(2) > (m*xSnap + b));
+            x(idx) = -x(idx);
+
+            data(idxFrame,9:10) = [x y];
         end
     end
-    
-    %% Convert midline to swimming vector
-    % Find first swim position
-    idx = find(results(:,8) == framesToAnalyse(1));
-    tempX = results(idx,9);
-    tempY = results(idx,10);
-    idx = find(~(isnan(tempX) | isnan(tempY)));
-    start = [mean(tempX(idx)) mean(tempY(idx))];
-    % Find last  swim position
-    idx = find(results(:,8) == framesToAnalyse(end));
-    tempX = results(idx,9);
-    tempY = results(idx,10);
-    idx = find(~(isnan(tempX) | isnan(tempY)));
-    finish = [mean(tempX(idx)) mean(tempY(idx))];
-
-
-    % Translocate midline
-    y = [];
-    for k = 1:(size(results,1)) 
-        y = [y; point2LineDistance(start,finish,results(k,9:10))];
-    end
-    % Define swimming path line
-    m = (finish(2) - start(2)) / (finish(1) - start(1));
-    if m == 0; m = 0.0000001;end;
-    if m == -Inf; m = 999999;end;
-    b = start(2) - m*start(1);
-    
-    [xSnap,ySnap] = snapPointsToLine(results(:,9),results(:,10),m,b);
-    
-    x = sqrt((xSnap-start(1)).^2 + (ySnap-start(2)).^2);
-    % Correct negative values
-    idx =  find(start(2) > (m*xSnap + b));
-    x(idx) = -x(idx);
-    
-    results(:,9:10) = [x y];
-    
-    %% testing
-    figure(2)
-    idx = find(results(:,8) == framesToAnalyse(1)); hold off;
-    plot(results(idx,9),results(idx,10)); hold on;
-    idx = find(results(:,8) == framesToAnalyse(end)); 
-    plot(results(idx,9),results(idx,10),'r');
-    set(gca,'Ydir','normal');
-    set(gca,'Xdir','reverse');axis 'equal'
-    legend('start','finish');
-    title('Start and end positions (relative to swimming direction)')
-
-    
-    
-    fw = fopen(['TrackingResuts' Individual Treatment '_' date '.csv'],'w');
-    fprintf(fw,'%s \n','CurveX,CurveY,HeadX,HeadY,TailX,TailY,MidlineLength,Frame,AbsX,AbsY,MidlineSlope');
-    fprintf(fw,'%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f \n',results');
-    fclose(fw);
-
-    disp('Analysis complete!')
  
+    
+    %% Save results
+    function saveResults
+        fw = fopen([resultsFile '_corrected.csv'],'w');
+        fprintf(fw,'%s \n','CurveX,CurveY,HeadX,HeadY,TailX,TailY,MidlineLength,Frame,AbsX,AbsY,MidlineSlope');
+        fprintf(fw,'%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f \n',data');
+        fclose(fw);
+    end
+    
 end
+
