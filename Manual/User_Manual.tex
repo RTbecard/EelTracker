@@ -1,0 +1,122 @@
+\documentclass[11pt]{report}
+
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage[cc]{titlepic}
+\usepackage{booktabs}
+\usepackage[colorlinks = True,
+linkcolor = blue]{hyperref}
+
+\title{Eel Tracker\\ \Large User Manual for version 1.0}
+\author{James Campbell}
+\titlepic{\vspace{5cm}
+\includegraphics[scale=0.2,clip = true,trim = 0 0 0 0]{zebrafish.jpeg}}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+
+\newcommand{\screenshot}[2]{
+\begin{center}
+\includegraphics[width= #2 ]{#1}
+\end{center}
+}
+
+\chapter{Keyboard Shortcuts for Manual Corrections}\label{keyboard}
+
+\begin{table}[h!]
+  \begin{center}
+    \begin{tabular}{cl}
+      \toprule
+      Z, X & Back, forward tracked frame \\
+      A & Redefine head and tail point (midline will be automatically detected again) \\
+      S & Manually define midline points (Press enter to set, in between points will be interpolated) \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+\end{table}
+
+\chapter{User Guide}
+
+\section{Quick Start}
+
+The following program has three parts:
+
+\begin{enumerate}
+  \item Video Analysis
+  \item Video Post-Processing
+  \item Tail beat analysis
+\end{enumerate}
+
+Here we'll provide a walkthrough for all three sections which will allow you to analyze tail beat frequencies from videos in a semi-automated process.  The first two parts are done in matlab, resulting in a \texttt{csv} file holding the coordinates of the eel's midline relative to the swimming vector.  The final tail beat analysis will be done in R.
+
+\subsection{MATLAB Compiler Runtime}
+
+The easiest way to deploy the MATLAB parts of the analysis is by using MATLAB Compiler Runtime (MCR).
+This allows you to run compiled MATLAB scripts without holding a paid license. You can download MCR \url{here}{https://www.mathworks.com/products/compiler/mcr.html}.
+This binary was compiled with MATLAB 2013a (64-bit, version 8.1, windows), so you will need to download that same version of MCR.
+Note that you must download the same archetecture type that the binary was compiled on, so even if you are using a 64-bit computer, you still need to download the 32-bit version of the program to run this.
+Also note that the MCR installation is invisible.
+Once complete, there are no items added to your start menu and the MCR will automatically open when you double click the compiled binary.
+
+\subsection{Get R packages}
+For the tail-beat analysis, we've saved the code you need in two packages hosted on github under the user \texttt{RTbecard}.
+These packages are not on the CRAN, but you can find instructions for installation of the page of each repository.
+
+\begin{enumerate}
+  \item ezPSD (\url{https://github.com/RTbecard/LUAnimBehav}) \\
+  This will be used for the frequency analysis
+  \item LUAnimBehav (\url{LUAnimBehav}) \\
+  This is a general purpose package for animal behavior where we've stored the functions for automating the tail beat analysis.
+\end{enumerate}
+
+\subsection{Get MATLAB code/binary}
+You can get the code for the MATLAB programe here: \url{https://github.com/RTbecard/EelTracker}.
+If you want to use a full version of matlab, you start the program by running the script \texttt{GUI.m}.
+If you are interested in the MCR version, you only need to download the exe file located in the folder \texttt{CompiledBinaries}.
+
+\subsection{Video Analysis}
+
+Here we'll walk through the video analysis.
+
+\begin{enumerate}
+  \item Start by starting the MATLAB program (double-click the exe if you are using MCR).
+
+  \screenshot{01.PNG}{250pt}
+
+  \item When open you will see a set of options for analysis.
+  While most are self-explanatory, we will quickly explain some of the options here:
+  \begin{itemize}
+    \item Frame Interval: You can use this to process only every nth frame of the video.
+    \item Reference Offset: This is used for automatically defining the reference images for the background subtration which is used for detection movement in the video.
+    To detenmine what value this should be, watch your video and move to the starting frame of your analysis.
+    Now, draw a box around the eel's location.
+    Next play the video and time how long it takes for the eel to completely leave this bounding box you drew.
+    Setting this value too low will result in detection errors, as the eel tracker uses frames n seconds before and after the current frame to create a reference image for motion detection.
+    \item Midline Points: The number of points to automatically draw along the midline.
+      Note these points are equally spaced along the major axis of the eel.
+    \item Ignore last _ midline points:  If you are analysing a fish with a large soft tail, it can be useful to ignore the motion detected by the tail, as this will extend beyond the midline and cause problems for the spline estimation.
+    Points will still be drawn for the ignored points, but they will be ignored when calculating a fitted spline for the midline.
+    \item Loess Smooth Intensity: This value determines the intensity of smoothing.
+    Smoothing helps avoid errors caused by outlier points.
+    If set too high, important features of the midline may be missed.
+    If set too low, the midline may not resemble a smooth curve, and outlier points will have a greater effect o the estimated midline.
+    \item Detection Threshold: Higher values will make the motion analysis less sensitive.
+    \item Min Object Size: All detected objects with a pixel size smaller than this will be ignored by the analysis.
+  \end{itemize}
+
+  \item Select a video and press analyse to begin the auto midline detection.
+  You will see an output like the image below:
+
+  \screenshot{02.PNG}{500pt}
+
+  \item
+
+
+
+\end{itemize}
+
+\end{document}
